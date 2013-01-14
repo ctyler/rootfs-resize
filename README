@@ -1,0 +1,93 @@
+=== rootfs-resize 0.9 - 2012-10-02 ===
+
+Merged rootfs-resize and raspberrypi-rootfs-resize.
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.8 ===
+
+Minor bugfixes.
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.7 - 2012-08-01 ===
+
+Removed service dependencies, which interfered with swap space
+creation.
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.7 - 2012-07-30 ===
+
+Added reboot after repartitioning
+Made swap space more robust (tolerant of being rebooted during
+swap space creation)
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.6 - 2012-07-25 ===
+
+Bugfix to script (fstab check)
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.5 - 2012-07-25 ===
+
+Bugfixes to .service file and script (:138).
+
+=== rootfs-resize / raspberrypi-rootfs-resize 0.4 - 2012-07-04 ===
+
+Two changes:
+(1) If the file /.swapsize exists and contains an integer number
+in text format, a swap file (/swap0) of that size in megabytes is
+created after the filesystem is resized. The maximum swap file
+size is half of the available free space, and the minimum size is
+1 MB.
+
+(2) The service now depends on firstboot. This permits firstboot
+to ask the user if the resize should be performed, and if so, what
+swap size is desired.
+
+===== rootfs-resize version 0.3 - 2012-06-12 =====
+
+rootfs-resize is a simple bash script designed for use on
+computers that use an SD card for storage, such as ARM development
+boards. Since SD cards can be purchased in various sizes, and 
+since even cards of the same nominal size may have slightly 
+different capacities, it is impossible to create an SD card 
+image guaranteed to exactly fit a card. It is also inefficient 
+to have an image that is larger than the files contained within 
+that image, because the "extra space" will/may slow compression, 
+download, and SD-card burn activities.
+
+As a result, the Fedora ARM SD card images typically contain
+a boot filesystem (usually FAT/VFAT) followed by a Linux extX
+root filesystem. The second filesystem is sized so that it
+is just big enough for the contained files.
+
+The rootfs-resize script attempts to resize the root (second)
+partition on the SD card to fill the device. At present, it 
+does this by deleting the root partition and then recreating
+it to fill the card; on the next boot, a background resize2fs
+is performed to resize the filesystem.
+
+Minimal basic sanity-checking is performed: the device containing
+the rootfs must contain exactly two partitions, as reported by
+"fdisk -l". If additional partitions have been created, the
+script will not run. The name of the block device containing the
+root filesystem must be /dev/sdX or /dev/mmcblk0pX.
+
+In order to resize the partition, the file /.rootfs-repartition
+must be present. After the partition resize operation, this file
+is removed and the file /.rootfs-resize is created; on next boot,
+when the resize2fs is started, the /.rootfs-resize file is
+removed.
+
+The operation of this script may be disabled in either of these 
+two ways:
+
+(1) By passing a kernel command line argument of "nofsresize"
+
+(2) By creating the file /.nofsresize
+
+If either of these suppressions flags are present, the script
+will not run, and it will disable itself for future boots.
+
+This script and the corresponding systemd unit file are licensed
+under the GPL v2, or at the user's discretion, any later version.
+
+This script is being included in Fedora 17 ARM, but the Fedora
+ARM team intends to introduce a more advanced and robust resizing
+mechanism in later releases. It may be useful on other architectures
+as well.
+

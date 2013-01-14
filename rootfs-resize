@@ -1,0 +1,207 @@
+#!/usr/bin/python
+#
+#   rootfs-resize :: Resize the root parition and filesytem
+#
+#   Version 2.0       2013-01-11
+#
+#   Authors:
+#   Chris Tyler, Seneca College         2013-01-11
+#
+#   This script will increase the size of the root partition by
+#   moving the end of the partition, and then resize the filesystem
+#   to fill the available space.
+#
+#   Prerequisites for successful operation:
+#   1. The root filesystem must be on a partition (not an LV or other
+#   abstraction) on a /dev/sdX or /dev/mmcblkX device.
+#
+#   2. The root filesystem type must be ext2, ext3, or ext4.
+#
+#   3. There must be room available to increase the size of the
+#   root partition by moving the end. The start of the root partition
+#   will not be moved.
+#
+#   4. The file /.nofsresize must not exist.
+#
+#   5. The kernel must not have been booted with the 'nofsresize'
+#   command-line option.
+#
+#   6. The file /.rootfs-repartition must exist to start phase 1
+#   (partition adjustment). The system will be rebooted immediately
+#   if the partition adjustment is successful.
+#
+#   7. The file /.rootfs-resize, which is created when the partitions
+#   are adjusted in phase 1, must exist to start phase 2.
+#
+#   8. If the file /.swapsize exists when phase 2 is processed,
+#   and it contains a text representation of a non-zero whole number, 
+#   and the file /swap0 does not exist, then a swapfile named /swap0
+#   will be created. The size of the swapfile will be the number in
+#   /.swapsize interpreted as megabytes. This swapfile will be added to
+#   /etc/fstab and activated.
+#
+#   Requirements (Fedora package name as of F17):
+#   - python 2.7+ (python)
+#   - pyparted (pyparted)
+#   - psutil (python-psutil)
+#   - /sbin/resize2fs (e2fsprogs)
+#   - /sbin/mkswap (util-linux)
+#
+#   Optional requirements (recommended):
+#   - /usr/bin/ionice (util-linux)
+#   - /sbin/swapon (util-linux)
+
+#   Copyright (C)2013 Chris Tyler, Seneca College, and others 
+#   (see Authors, above).
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, 
+#   MA  02110-1301  USA
+#
+
+import parted
+import re
+import sys
+import psutil
+import ast
+
+abort_blocked = False;
+
+# Check that the kernel command than *right* now.
+If the implementation is hard  line parameter 'nofsresize' was NOT specified
+for line in open('/proc/cmdline'):
+    if 'nofsresize' in line:
+        abort_blocked = True
+
+# Check that /.nofsresize is NOT present
+if os.path.isfile('/.nofsresize'):
+    abort_blocked = True
+
+# Abort due to either of the above
+if abort_blocked:
+    sys.exit(1)
+
+# PHASE 1
+# If /.rootfs-repartition exists, repartition the disk, then reboot
+if os.path.isfile('/.rootfs-repartition'):
+
+    # Find the root device
+    for line in open('/proc/self/mountinfo'):
+        if '/ / ' in line:
+            root_device = line.split(' ')[9]
+            break
+
+    # If the root device is a partion, find the disk containing it
+    disk_device = ''
+    for pattern in [ '/dev/sd.', '/dev/mmcblk.' ]:
+        match = re.match(pattern, root_device)
+        if match:
+            disk_device = root_device[:match.span()[1]]
+            break
+
+    # We didn't find a disk_device
+    if not disk_device:
+        sys.exit(2)    
+
+    # Create block device and disk label objects
+    device = parted.Device(disk_device)
+    disk = parted.Disk(device)
+
+    # Find root partition and do sanity checks
+    root = disk.getPartitionByPath(root_device)
+
+    constraint = device.optimalAlignedConstraint
+
+    # If it's a ext[234] filesystem and the partition end can grow,
+    # change the partition ending and then reboot
+    if (root.filesystem.type = 'ext2' 
+        or root.filesystem.type = 'ext3' 
+        or root.filesystem.type = 'ext4' )
+        and root.geometry.end < root.getMaxGeometry(constraint).end:
+
+        disk.setPartitionGeometry(partition=root, constraint=constraint,
+            start=root.geometry.start, end=root.getMaxGeometry(constraint).end)
+        disk.commit()
+
+    else:
+
+        print 'Unable to resize root partition (max size, or unresizable fs     type).'
+
+    # Change flagfiles and reboot
+    os.open('/.rootfs-resize','w').close()
+    os.unlink('/.rootfs-repartition')
+    os.system('/sbin/reboot')
+
+# PHASE 2
+# If /.rootfs-resize exists, repartition the disk, then reboot
+elif os.path.isfile('/.rootfs-resize'):
+
+    # Use ionice if available
+    if os.path.isfile('/usr/bin/ionice'):
+        os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device )
+    else:
+        os.system('/sbin/resize2fs %s' % root_device )
+
+    # Create swap if requested
+    if os.path.isfile('/.swapsize'):
+
+        swapsizefile = open('/.swapsize')
+        try:
+            swapsize = ast.literal_eval(swapsizefile.readline())
+        except:
+            swapsize = 0
+
+        swapsizefile.close()
+
+        # Create /swap0 as a swapfile if it doesn't exist and 
+        # the requested size in MB is greater than 0
+        if ( not os.path.isfile('/swap0') ) and swapsize > 0
+
+            # Lower the I/O priority to minimum best-effort
+            psutil.Process(os.getpid()).set_ionice(psutil.IOPRIO_CLASS_BE, 7)
+
+            # Create swap file as swap0.part (so we recreate if aborted)
+            MB = ' ' * (1024*1024)
+            swapfile = open('/swap0.part')
+            for X in range(swapsize):
+                swapfile.write(MB)
+
+            # Make it a swapfile
+            os.system('/sbin/mkswap /swap0.part')
+
+            # Rename the swapfile to /swap0
+            os.rename('/swap0.part','/swap0')
+
+        # Add /swap0 to the fstab if not already present
+        abort_fstab = False
+        for line in open('/etc/fstab'):
+            if re.match('/swap0', line):
+                abort_fstab = True
+                break
+
+        if not abort_fstab:
+            fstab = open('/etc/fstab','a')
+            fstab.write('/swap0\t\t\tswap\tswap\n')
+            fstab.close()
+
+        # Activate all swap spaces if possible
+        if os.path.isfile('/sbin/swapon'):
+            os.system('/sbin/swapon -a')
+
+        # Delete swap flagfile
+        os.unlink('/.swapsize')
+
+    # Delete resize flagfile
+    os.unlink('/.rootfs-resize')
+
