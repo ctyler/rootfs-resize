@@ -56,6 +56,6 @@ will not run.
 This script and the corresponding systemd unit file are licensed
 under the GPL v2, or at the user's discretion, any later version.
 
-The web page and git repository for this code is accessible at
+The web page and git repository for this code is accessible at the
 [Github Repo](https://github.com/ctyler/rootfs-resize)
 

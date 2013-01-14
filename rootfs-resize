@@ -75,11 +75,12 @@ import re
 import sys
 import psutil
 import ast
+import os
+import glob
 
 abort_blocked = False;
 
-# Check that the kernel command than *right* now.
-If the implementation is hard  line parameter 'nofsresize' was NOT specified
+# Check that the kernel command line parameter 'nofsresize' was NOT specified
 for line in open('/proc/cmdline'):
     if 'nofsresize' in line:
         abort_blocked = True
@@ -92,27 +93,41 @@ if os.path.isfile('/.nofsresize'):
 if abort_blocked:
     sys.exit(1)
 
+# Find the root device
+for line in open('/proc/self/mountinfo'):
+    if '/ / ' in line:
+        root_major_minor = line.split(' ')[2]
+        break
+
+major=int(root_major_minor.split(":")[0])
+minor=int(root_major_minor.split(":")[1])
+
+# We now have the major/minor of the root device.
+# Scan devices to find the corresponding block device.
+# This is necessary because the device name reported in
+# /proc/self/mountinfo may be /dev/root
+root_device = ''
+for blockdev in glob.glob("/dev/sd??*")+glob.glob("/dev/mmcblk*p*"):
+    rdev=os.stat(blockdev).st_rdev
+    if os.major(rdev) == major and os.minor(rdev) == minor:
+        root_device = blockdev
+        break
+
+# If the root device is a partion, find the disk containing it
+disk_device = ''
+for pattern in [ '/dev/sd.', '/dev/mmcblk.' ]:
+    match = re.match(pattern, root_device)
+    if match:
+        disk_device = root_device[:match.span()[1]]
+        break
+
+# Exit if we didn't find a disk_device
+if not disk_device:
+    sys.exit(2)    
+
 # PHASE 1
 # If /.rootfs-repartition exists, repartition the disk, then reboot
 if os.path.isfile('/.rootfs-repartition'):
-
-    # Find the root device
-    for line in open('/proc/self/mountinfo'):
-        if '/ / ' in line:
-            root_device = line.split(' ')[9]
-            break
-
-    # If the root device is a partion, find the disk containing it
-    disk_device = ''
-    for pattern in [ '/dev/sd.', '/dev/mmcblk.' ]:
-        match = re.match(pattern, root_device)
-        if match:
-            disk_device = root_device[:match.span()[1]]
-            break
-
-    # We didn't find a disk_device
-    if not disk_device:
-        sys.exit(2)    
 
     # Create block device and disk label objects
     device = parted.Device(disk_device)
@@ -125,21 +140,20 @@ if os.path.isfile('/.rootfs-repartition'):
 
     # If it's a ext[234] filesystem and the partition end can grow,
     # change the partition ending and then reboot
-    if (root.filesystem.type = 'ext2' 
-        or root.filesystem.type = 'ext3' 
-        or root.filesystem.type = 'ext4' )
-        and root.geometry.end < root.getMaxGeometry(constraint).end:
+    if (root.fileSystem.type == 'ext2' 
+        or root.fileSystem.type == 'ext3' 
+        or root.fileSystem.type == 'ext4' ) \
+        and root.geometry.end < root.getMaxGeometry(constraint.getPedConstraint()).end:
 
         disk.setPartitionGeometry(partition=root, constraint=constraint,
-            start=root.geometry.start, end=root.getMaxGeometry(constraint).end)
+            start=root.geometry.start, end=root.getMaxGeometry(constraint.getPedConstraint()).end)
         disk.commit()
 
     else:
-
-        print 'Unable to resize root partition (max size, or unresizable fs     type).'
+        print 'Unable to resize root partition (max size, or unresizable fs type).'
 
     # Change flagfiles and reboot
-    os.open('/.rootfs-resize','w').close()
+    open('/.rootfs-resize','w').close()
     os.unlink('/.rootfs-repartition')
     os.system('/sbin/reboot')
 
@@ -166,14 +180,14 @@ elif os.path.isfile('/.rootfs-resize'):
 
         # Create /swap0 as a swapfile if it doesn't exist and 
         # the requested size in MB is greater than 0
-        if ( not os.path.isfile('/swap0') ) and swapsize > 0
+        if ( not os.path.isfile('/swap0') ) and swapsize > 0:
 
             # Lower the I/O priority to minimum best-effort
             psutil.Process(os.getpid()).set_ionice(psutil.IOPRIO_CLASS_BE, 7)
 
             # Create swap file as swap0.part (so we recreate if aborted)
             MB = ' ' * (1024*1024)
-            swapfile = open('/swap0.part')
+            swapfile = open('/swap0.part','w')
             for X in range(swapsize):
                 swapfile.write(MB)
 
