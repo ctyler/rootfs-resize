@@ -138,16 +138,31 @@ if os.path.isfile('/.rootfs-repartition'):
 
     constraint = device.optimalAlignedConstraint
 
+    # Find the proposed end of the root partition.
+    # This try/except is a workaround for pyparted ticket #50 -
+    # see https://fedorahosted.org/pyparted/ticket/50
+    try:
+        new_end = root.getMaxGeometry(constraint).end
+    except TypeError:
+        new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
+
     # If it's a ext[234] filesystem and the partition end can grow,
     # change the partition ending and then reboot
     if (root.fileSystem.type == 'ext2' 
         or root.fileSystem.type == 'ext3' 
         or root.fileSystem.type == 'ext4' ) \
-        and root.geometry.end < root.getMaxGeometry(constraint.getPedConstraint()).end:
+        and root.geometry.end < new_end:
 
-        disk.setPartitionGeometry(partition=root, constraint=constraint,
-            start=root.geometry.start, end=root.getMaxGeometry(constraint.getPedConstraint()).end)
-        disk.commit()
+        disk.setPartitionGeometry(partition = root, constraint = constraint,
+            start = root.geometry.start, end = new_end )
+
+        # disk.commit() will usually throw an exception because the kernel
+        # is using the rootfs and refuses to accept the new partition table
+        # ... so we reboot
+        try:
+            disk.commit()
+        except:
+            pass
 
     else:
         print 'Unable to resize root partition (max size, or unresizable fs type).'
