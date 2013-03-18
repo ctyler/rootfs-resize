@@ -173,7 +173,7 @@ if os.path.isfile('/.rootfs-repartition'):
     os.system('/sbin/reboot')
 
 # PHASE 2
-# If /.rootfs-resize exists, repartition the disk, then reboot
+# If /.rootfs-resize exists, resize the filesystem
 elif os.path.isfile('/.rootfs-resize'):
 
     # Use ionice if available
